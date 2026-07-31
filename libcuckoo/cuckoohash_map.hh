@@ -933,6 +933,21 @@ private:
     return ResizeCounter{resize_counter_.load(std::memory_order_acquire)};
   }
 
+  // Several operations which deal with locks must load the resize counter and
+  // the hashpower. The resize counter is used to synchronize with resize
+  // operations (cuckoo_fast_double, cuckoo_expand_simple), which will first
+  // update the hashpower, and then bump the resize counter. So these locking
+  // operations must load the resize counter before they load the hashpower. If
+  // we load the hashpower first, we risk reading a stale hashpower and a
+  // post-resize resize counter, and then using that stale hashpower.
+  //
+  // Because both loads are memory_order_acquire, they cannot be re-ordered.
+  std::pair<ResizeCounter, size_type> load_resize_counter_and_hashpower() const {
+    const ResizeCounter resize_counter = load_resize_counter();
+    const size_type hp = hashpower();
+    return std::make_pair(resize_counter, hp);
+  }
+
   // This exception is thrown whenever we try to lock a bucket, but the
   // hashpower is not what was expected
   class resize_counter_changed {};
@@ -1087,8 +1102,9 @@ private:
   TwoBuckets snapshot_and_lock_two(const hash_value &hv) const {
     while (true) {
       // Keep the current hashpower and locks we're using to compute the buckets
-      const ResizeCounter resize_counter = load_resize_counter();
-      const size_type hp = hashpower();
+      const std::pair<ResizeCounter, size_t> rc_and_hp = load_resize_counter_and_hashpower();
+      const ResizeCounter resize_counter = rc_and_hp.first;
+      const size_type hp = rc_and_hp.second;
       const size_type i1 = index_hash(hp, hv.hash);
       const size_type i2 = alt_index(hp, hv.partial, i1);
       try {
@@ -1388,8 +1404,9 @@ private:
     // hashpower, meaning the buckets may not be valid anymore. In this
     // case, the cuckoopath functions will have thrown a resize_counter_changed
     // exception, which we catch and handle here.
-    const size_type hp = hashpower();
-    const ResizeCounter resize_counter = load_resize_counter();
+    const std::pair<ResizeCounter, size_t> rc_and_hp = load_resize_counter_and_hashpower();
+    const ResizeCounter resize_counter = rc_and_hp.first;
+    const size_type hp = rc_and_hp.second;
     b.unlock();
     CuckooRecords cuckoo_path;
     bool done = false;
