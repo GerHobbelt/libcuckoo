@@ -1087,8 +1087,8 @@ private:
   TwoBuckets snapshot_and_lock_two(const hash_value &hv) const {
     while (true) {
       // Keep the current hashpower and locks we're using to compute the buckets
-      const size_type hp = hashpower();
       const ResizeCounter resize_counter = load_resize_counter();
+      const size_type hp = hashpower();
       const size_type i1 = index_hash(hp, hv.hash);
       const size_type i2 = alt_index(hp, hv.partial, i1);
       try {
